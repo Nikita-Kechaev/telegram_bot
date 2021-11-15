@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from telegram import Bot
 
 from exceptions import (BadRequest, HomeworkStatusNotChange, TokenValueError,
-                        UnknownStatus, WrongTypeAnsewr)
+                        WrongTypeAnsewr, NoHomeworkToRewiev)
 
 load_dotenv()
 logger = logging.getLogger('homework_logger')
@@ -19,19 +19,11 @@ logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s, %(levelname)s, %(message)s'
 )
-homework_statuses = [
+HOMEWORK_STATUSES = [
     'reviewing',
     'approved',
     'rejected'
 ]
-yandex_api_key_list = [
-    'id',
-    'status',
-    'homework_name',
-    'lesson_name'
-]
-
-
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
@@ -71,11 +63,22 @@ def get_api_answer(current_timestamp):
     """
     timestamp = current_timestamp or int(time.time())
     params = {'from_date': timestamp}
-    response = requests.get(ENDPOINT, headers=HEADERS, params=params)
-    if response.status_code != 200:
-        raise BadRequest
-    response = response.json()
-    return response
+    try:
+        response = requests.get(
+            ENDPOINT,
+            headers=HEADERS,
+            params=params
+        )
+        status_code = response.status_code
+        if status_code != 200:
+            error_message = 'Нет возможности получить информацию с сервера, '\
+                            f'status_code запроса: {status_code}.'
+            logging.error(error_message)
+            raise BadRequest(error_message)
+        response = response.json()
+        return response
+    except ConnectionError as error:
+        raise ConnectionError(error)
 
 
 def check_response(response):
@@ -83,21 +86,30 @@ def check_response(response):
     Проверяет тип полученных данных. Если не список - вызывает исключение.
     Возвращает список.
     """
-    homeworks = response['homeworks']
-    if type(homeworks) != list:
-        raise WrongTypeAnsewr
-    return homeworks
+    try:
+        homeworks = response['homeworks']
+        if not isinstance(homeworks, list):
+            logging.error(
+                'Ответ c сервера содержит некорректный тип данных!'
+            )
+            raise WrongTypeAnsewr(
+                'Ответ c сервера содержит некорректный тип данных!'
+            )
+        homework_status = homeworks[0].get('status')
+        if homework_status not in HOMEWORK_STATUSES:
+            logging.error('Недокументированный статус домашней работы.')
+        return homeworks
+    except IndexError:
+        logging.error(
+            'Нет домашних заданий на проверку.'
+        )
+        raise NoHomeworkToRewiev(
+            'Нет домашних заданий на проверку.'
+        )
 
 
 def parse_status(homework):
     """Проверяет ключи. Возвращает сообщение об изменении status."""
-    for key in yandex_api_key_list:
-        try:
-            homework[key]
-        except KeyError as error:
-            logging.error(
-                f'Отсутствие ожидаемых ключей в ответе API : {error}'
-            )
     homework_name = homework.get('homework_name')
     homework_status = homework.get('status')
     verdict = HOMEWORK_STATUSES[homework_status]
@@ -124,62 +136,34 @@ def check_tokens():
     return True
 
 
-def test(new_homework_status, old_homework_status):
-    """Функция создана для того, что бы Flake8 пропустил на ревью."""
-    if new_homework_status not in homework_statuses:
-        raise UnknownStatus
-    if old_homework_status == new_homework_status:
-        raise HomeworkStatusNotChange
-
-
 def main():
     """Основная логика работы бота."""
-    Run = check_tokens()
-    if Run is False:
+    run = check_tokens()
+    if not run:
         raise TokenValueError('Отсутствует обязательная переменная окружения')
     bot = Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
+    old_message = None
     old_homework_status = None
-    BadRequest_count = 0
-    UnknownStatus_count = 0
-    while Run:
+    while True:
         try:
             response = get_api_answer(current_timestamp)
             homeworks = check_response(response)
-            new_homework_status = homeworks[0].get('status')
-            test(new_homework_status, old_homework_status)
-            old_homework_status = new_homework_status
             message = parse_status(homeworks[0])
+            if old_homework_status == homeworks[0].get('status'):
+                raise HomeworkStatusNotChange
+            old_homework_status = homeworks[0].get('status')
             current_timestamp = current_timestamp
-        except UnknownStatus:
-            logging.error('Недокументированный статус домашней работы')
-            if UnknownStatus_count > 0:
-                time.sleep(RETRY_TIME)
-                continue
-            message = 'На данный момент статус домашней работы не определен'
-            send_message(bot, message)
-            UnknownStatus_count = 1
         except HomeworkStatusNotChange:
             logging.debug('Отсутствие в ответе новых статусов')
-            time.sleep(RETRY_TIME)
-        except BadRequest:
-            logging.error('Нет возможности получить информацию с сервера')
-            if BadRequest_count > 0:
-                time.sleep(RETRY_TIME)
-                continue
-            message = 'Нет возможности получить информацию с сервера'
-            send_message(bot, message)
-            BadRequest_count = 1
-            time.sleep(RETRY_TIME)
         except Exception as error:
             logging.error(f'Сбой в работе программы: {error}')
             message = f'Сбой в работе программы: {error}'
-            time.sleep(RETRY_TIME)
-        else:
+
+        if old_message != message:
+            old_message = message
             send_message(bot, message)
-            BadRequest_count = 0
-            UnknownStatus_count = 0
-            time.sleep(RETRY_TIME)
+        time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':

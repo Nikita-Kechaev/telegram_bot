@@ -14,5 +14,5 @@ class WrongTypeAnsewr(Exception):
     pass
 
 
-class UnknownStatus(Exception):
+class NoHomeworkToRewiev(Exception):
     pass
