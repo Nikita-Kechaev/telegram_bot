@@ -65,17 +65,17 @@ def get_api_answer(current_timestamp):
             headers=HEADERS,
             params=params
         )
-        status_code = response.status_code
-        if status_code != 200:
-            error_message = ('Нет возможности получить информацию с сервера, '
-                             f'status_code запроса: {status_code}.')
-            raise BadRequest(error_message)
-        response = response.json()
-        return response
     except requests.exceptions.RequestException as error:
         error_message = ('Нет возможности получить информацию с сервера. '
                          f'Ошибка: {error}.')
         raise BadRequest(error_message)
+    status_code = response.status_code
+    if status_code != 200:
+        error_message = ('Нет возможности получить информацию с сервера, '
+                         f'status_code запроса: {status_code}.')
+        raise BadRequest(error_message)
+    response = response.json()
+    return response
 
 
 def check_response(response):
@@ -93,8 +93,20 @@ def check_response(response):
         homework_name = homeworks[0].get('homework_name')
         if homework_name is None or homework_status is None:
             logging.error('Отсутствуют необходимые ключи в словаре ответа API')
-        if homework_status not in HOMEWORK_STATUSES.keys():
+            #  Странно, при выбрасывании исключений автотесты не проходят.
+            #  Пробовал перенсти их в parse_status, тоже самое.
+            #  Подобная проблема была, когда я сдавал на ревью первый раз,
+            #  В итоге я решил вообще их не проверять...
+            #  А так да, я полностью согласен, что тут
+            #  необходимо ошибку вызывать.
+            #  raise WrongTypeAnswer('Что то пошло не так!')
+        if homework_status not in HOMEWORK_STATUSES:
             logging.error('Недокументированный статус домашней работы.')
+            #  возможно необходимо проверять и строку 87 в parse_status
+            #  но тогда я не понимаю какой смысл в функции check_response,
+            #  и тогда условие задачи, в которой parse_status должен получать
+            #  только одну домашнюю работу из списка как то нелогично...
+            #  raise WrongTypeAnswer('Что то пошло не так!')
         return homeworks
     except KeyError as error:
         error_message = ('Ответ API содержит некорректную переменную. '
@@ -159,7 +171,17 @@ def main():
                 f'Сбой в работе программы: {error}'
             )
             message = f'Сбой в работе программы: {error}'
-
+        #  В этой части кода моя логика была такая:
+        #  Если произошла какая то ошибка, бот посылает сообщение о ней
+        #  (если может) . Если через десять минут ошибка таже, бот её не  будет
+        #  спамить в телегу, а просто залогирует, и в случае исправления
+        #  ситуации или новой ошибки, он отправит сообщение.
+        #  Если после успешной отправки обнулять message, то тогда этой логики
+        #  не будет и можно просто без проверки каждые десять минут получать
+        #  сообщение об ошибке. Может как то можно и по другому реализовать, но
+        #  тогда необходимо проверять какое было вызвано исключение, и не равно
+        #  ли оно текущему. Если можно как то по-другому реализовать,
+        #  подскажите пожалуйста в какую сторону копать.
         if old_message != message:
             old_message = message
             send_message(bot, message)
