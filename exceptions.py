@@ -10,9 +10,5 @@ class BadRequest(Exception):
     pass
 
 
-class WrongTypeAnsewr(Exception):
-    pass
-
-
-class NoHomeworkToRewiev(Exception):
+class WrongTypeAnswer(Exception):
     pass

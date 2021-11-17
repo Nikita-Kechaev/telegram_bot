@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from telegram import Bot
 
 from exceptions import (BadRequest, HomeworkStatusNotChange, TokenValueError,
-                        WrongTypeAnsewr, NoHomeworkToRewiev)
+                        WrongTypeAnswer)
 
 load_dotenv()
 logger = logging.getLogger('homework_logger')
@@ -19,11 +19,7 @@ logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s, %(levelname)s, %(message)s'
 )
-HOMEWORK_STATUSES = [
-    'reviewing',
-    'approved',
-    'rejected'
-]
+
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
@@ -71,14 +67,15 @@ def get_api_answer(current_timestamp):
         )
         status_code = response.status_code
         if status_code != 200:
-            error_message = 'Нет возможности получить информацию с сервера, '\
-                            f'status_code запроса: {status_code}.'
-            logging.error(error_message)
+            error_message = ('Нет возможности получить информацию с сервера, '
+                             f'status_code запроса: {status_code}.')
             raise BadRequest(error_message)
         response = response.json()
         return response
-    except ConnectionError as error:
-        raise ConnectionError(error)
+    except requests.exceptions.RequestException as error:
+        error_message = ('Нет возможности получить информацию с сервера. '
+                         f'Ошибка: {error}.')
+        raise BadRequest(error_message)
 
 
 def check_response(response):
@@ -89,27 +86,28 @@ def check_response(response):
     try:
         homeworks = response['homeworks']
         if not isinstance(homeworks, list):
-            logging.error(
-                'Ответ c сервера содержит некорректный тип данных!'
-            )
-            raise WrongTypeAnsewr(
+            raise WrongTypeAnswer(
                 'Ответ c сервера содержит некорректный тип данных!'
             )
         homework_status = homeworks[0].get('status')
-        if homework_status not in HOMEWORK_STATUSES:
+        homework_name = homeworks[0].get('homework_name')
+        if homework_name is None or homework_status is None:
+            logging.error('Отсутствуют необходимые ключи в словаре ответа API')
+        if homework_status not in HOMEWORK_STATUSES.keys():
             logging.error('Недокументированный статус домашней работы.')
         return homeworks
-    except IndexError:
-        logging.error(
-            'Нет домашних заданий на проверку.'
-        )
-        raise NoHomeworkToRewiev(
-            'Нет домашних заданий на проверку.'
-        )
+    except KeyError as error:
+        error_message = ('Ответ API содержит некорректную переменную. '
+                         f'Ошибка: {error}.')
+        raise WrongTypeAnswer(error_message)
+    except IndexError as error:
+        error_message = ('Нет домашних заданий на проверку. '
+                         f'Ошибка: {error}.')
+        raise HomeworkStatusNotChange(error_message)
 
 
 def parse_status(homework):
-    """Проверяет ключи. Возвращает сообщение об изменении status."""
+    """Возвращает сообщение об изменении status."""
     homework_name = homework.get('homework_name')
     homework_status = homework.get('status')
     verdict = HOMEWORK_STATUSES[homework_status]
@@ -144,20 +142,22 @@ def main():
     bot = Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
     old_message = None
-    old_homework_status = None
     while True:
         try:
             response = get_api_answer(current_timestamp)
             homeworks = check_response(response)
             message = parse_status(homeworks[0])
-            if old_homework_status == homeworks[0].get('status'):
-                raise HomeworkStatusNotChange
-            old_homework_status = homeworks[0].get('status')
-            current_timestamp = current_timestamp
-        except HomeworkStatusNotChange:
-            logging.debug('Отсутствие в ответе новых статусов')
+            current_timestamp = response['current_date']
+        except HomeworkStatusNotChange as error:
+            logging.debug(
+                'Отсутствие нового статуса домашней работы.'
+                f'Ошибка: {error}'
+            )
+            message = f'Отсутствие нового статуса домашней работы: {error}'
         except Exception as error:
-            logging.error(f'Сбой в работе программы: {error}')
+            logging.error(
+                f'Сбой в работе программы: {error}'
+            )
             message = f'Сбой в работе программы: {error}'
 
         if old_message != message:
