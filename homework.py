@@ -85,45 +85,38 @@ def check_response(response):
     """
     try:
         homeworks = response['homeworks']
+        if not homeworks:
+            raise IndexError('Нет домашних заданий на проверку.')
         if not isinstance(homeworks, list):
             raise WrongTypeAnswer(
                 'Ответ c сервера содержит некорректный тип данных!'
             )
-        homework_status = homeworks[0].get('status')
-        homework_name = homeworks[0].get('homework_name')
-        if homework_name is None or homework_status is None:
-            logging.error('Отсутствуют необходимые ключи в словаре ответа API')
-            #  Странно, при выбрасывании исключений автотесты не проходят.
-            #  Пробовал перенсти их в parse_status, тоже самое.
-            #  Подобная проблема была, когда я сдавал на ревью первый раз,
-            #  В итоге я решил вообще их не проверять...
-            #  А так да, я полностью согласен, что тут
-            #  необходимо ошибку вызывать.
-            #  raise WrongTypeAnswer('Что то пошло не так!')
-        if homework_status not in HOMEWORK_STATUSES:
-            logging.error('Недокументированный статус домашней работы.')
-            #  возможно необходимо проверять и строку 87 в parse_status
-            #  но тогда я не понимаю какой смысл в функции check_response,
-            #  и тогда условие задачи, в которой parse_status должен получать
-            #  только одну домашнюю работу из списка как то нелогично...
-            #  raise WrongTypeAnswer('Что то пошло не так!')
         return homeworks
     except KeyError as error:
         error_message = ('Ответ API содержит некорректную переменную. '
                          f'Ошибка: {error}.')
         raise WrongTypeAnswer(error_message)
-    except IndexError as error:
-        error_message = ('Нет домашних заданий на проверку. '
-                         f'Ошибка: {error}.')
-        raise HomeworkStatusNotChange(error_message)
 
 
 def parse_status(homework):
     """Возвращает сообщение об изменении status."""
-    homework_name = homework.get('homework_name')
-    homework_status = homework.get('status')
-    verdict = HOMEWORK_STATUSES[homework_status]
-    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
+    try:
+        #  Через .get() автотесты падают, пропускает только такую проверку.
+        homework_name = homework['homework_name']
+        homework_status = homework['status']
+        if homework_status not in HOMEWORK_STATUSES:
+            logging.error('Недокументированный статус домашней работы.')
+            raise WrongTypeAnswer(
+                'Недокументированный статус домашней работы.'
+            )
+        verdict = HOMEWORK_STATUSES[homework_status]
+        return f'Изменился статус проверки работы "{homework_name}". {verdict}'
+    except KeyError as error:
+        #  Вызов этого исключения необходим для автотестов.
+        error_message = ('Ответ API содержит некорректную переменную. '
+                         f'Ошибка: {error}.')
+        #  Необходимо возвращать именно это исключение,иначе тесты падают.
+        raise KeyError(error_message)
 
 
 def check_tokens():
@@ -159,6 +152,7 @@ def main():
             response = get_api_answer(current_timestamp)
             homeworks = check_response(response)
             message = parse_status(homeworks[0])
+            old_message = None
             current_timestamp = response['current_date']
         except HomeworkStatusNotChange as error:
             logging.debug(
@@ -171,17 +165,6 @@ def main():
                 f'Сбой в работе программы: {error}'
             )
             message = f'Сбой в работе программы: {error}'
-        #  В этой части кода моя логика была такая:
-        #  Если произошла какая то ошибка, бот посылает сообщение о ней
-        #  (если может) . Если через десять минут ошибка таже, бот её не  будет
-        #  спамить в телегу, а просто залогирует, и в случае исправления
-        #  ситуации или новой ошибки, он отправит сообщение.
-        #  Если после успешной отправки обнулять message, то тогда этой логики
-        #  не будет и можно просто без проверки каждые десять минут получать
-        #  сообщение об ошибке. Может как то можно и по другому реализовать, но
-        #  тогда необходимо проверять какое было вызвано исключение, и не равно
-        #  ли оно текущему. Если можно как то по-другому реализовать,
-        #  подскажите пожалуйста в какую сторону копать.
         if old_message != message:
             old_message = message
             send_message(bot, message)
