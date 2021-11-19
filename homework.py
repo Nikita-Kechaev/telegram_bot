@@ -86,7 +86,7 @@ def check_response(response):
     try:
         homeworks = response['homeworks']
         if not homeworks:
-            raise IndexError('Нет домашних заданий на проверку.')
+            raise HomeworkStatusNotChange('Нет домашних заданий на проверку.')
         if not isinstance(homeworks, list):
             raise WrongTypeAnswer(
                 'Ответ c сервера содержит некорректный тип данных!'
@@ -100,23 +100,18 @@ def check_response(response):
 
 def parse_status(homework):
     """Возвращает сообщение об изменении status."""
-    try:
-        #  Через .get() автотесты падают, пропускает только такую проверку.
-        homework_name = homework['homework_name']
-        homework_status = homework['status']
-        if homework_status not in HOMEWORK_STATUSES:
-            logging.error('Недокументированный статус домашней работы.')
-            raise WrongTypeAnswer(
-                'Недокументированный статус домашней работы.'
-            )
-        verdict = HOMEWORK_STATUSES[homework_status]
-        return f'Изменился статус проверки работы "{homework_name}". {verdict}'
-    except KeyError as error:
-        #  Вызов этого исключения необходим для автотестов.
-        error_message = ('Ответ API содержит некорректную переменную. '
-                         f'Ошибка: {error}.')
-        #  Необходимо возвращать именно это исключение,иначе тесты падают.
-        raise KeyError(error_message)
+    if 'homework_name' and 'status' not in homework:
+        raise WrongTypeAnswer(
+            'Нет ожидаемых переменных в словаре ответа от API.'
+        )
+    homework_name = homework['homework_name']
+    homework_status = homework['status']
+    if homework_status not in HOMEWORK_STATUSES:
+        raise WrongTypeAnswer(
+            'Недокументированный статус домашней работы.'
+        )
+    verdict = HOMEWORK_STATUSES[homework_status]
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def check_tokens():
