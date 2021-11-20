@@ -100,12 +100,19 @@ def check_response(response):
 
 def parse_status(homework):
     """Возвращает сообщение об изменении status."""
-    if 'homework_name' and 'status' not in homework:
+    #  Если строки 110 и 111 выполнять после стоки 112 -
+    #  то тогда автотесты не пропускают. Если вызывать как сечйчас, то
+    #  пропускают, но тогда я не вижу смысла в строке 112, ведь если
+    #  вызвать их в начале функции и в словаре homework будут отсутствовать
+    #  'status' or 'homework_name' то тогда у нас будет выбрасываться ошибка
+    #  KeyError и она будет обрабатываться в main() функции и тогда зачем
+    #  проверка в строке 112? Подскажите пожалуйста.
+    homework_status = homework['status']
+    homework_name = homework['homework_name']
+    if 'status' not in homework or 'homework_name' not in homework:
         raise WrongTypeAnswer(
             'Нет ожидаемых переменных в словаре ответа от API.'
         )
-    homework_name = homework['homework_name']
-    homework_status = homework['status']
     if homework_status not in HOMEWORK_STATUSES:
         raise WrongTypeAnswer(
             'Недокументированный статус домашней работы.'
